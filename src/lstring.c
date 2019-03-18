@@ -82,6 +82,16 @@ void luaS_resize (lua_State *L, int newsize) {
     while (p) {  /* for each node in the list */
       TString *hnext = p->u.hnext;  /* save next */
       unsigned int h = lmod(p->hash, newsize);  /* new position */
+
+	  /*
+	   * 这段是这样处理的
+	   * 初始：
+	   * p -> [1] ->[2] -> [3]
+	   * h -> [5] ->[6] -> [7]
+	   * 处理后
+	   * p ->[2] -> [3]
+	   * h ->[1] -> [5] ->[6] -> [7]
+	   */
       p->u.hnext = tb->hash[h];  /* chain it */
       tb->hash[h] = p;
       p = hnext;
@@ -134,6 +144,8 @@ static TString *createstrobj (lua_State *L, size_t l, int tag, unsigned int h) {
   TString *ts;
   GCObject *o;
   size_t totalsize;  /* total size of TString object */
+
+  //totalsize = sizeof(TString) + l + 1, 多加的1为了存储\0
   totalsize = sizelstring(l);
   o = luaC_newobj(L, tag, totalsize);
   ts = gco2ts(o);
@@ -156,6 +168,7 @@ void luaS_remove (lua_State *L, TString *ts) {
   TString **p = &tb->hash[lmod(ts->hash, tb->size)];
   while (*p != ts)  /* find previous element */
     p = &(*p)->u.hnext;
+  //直接从列表里摘出来，并不释放
   *p = (*p)->u.hnext;  /* remove element from its list */
   tb->nuse--;
 }
@@ -170,6 +183,8 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
   unsigned int h = luaS_hash(str, l, g->seed);
   TString **list = &g->strt.hash[lmod(h, g->strt.size)];
   lua_assert(str != NULL);  /* otherwise 'memcmp'/'memcpy' are undefined */
+
+  //先从列表中找，找到后直接返回
   for (ts = *list; ts != NULL; ts = ts->u.hnext) {
     if (l == ts->shrlen &&
         (memcmp(str, getstr(ts), l * sizeof(char)) == 0)) {
@@ -179,10 +194,13 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
       return ts;
     }
   }
+
+  //如果元素的个数太多了，就要重新生成散列桶
   if (g->strt.nuse >= g->strt.size && g->strt.size <= MAX_INT/2) {
     luaS_resize(L, g->strt.size * 2);
     list = &g->strt.hash[lmod(h, g->strt.size)];  /* recompute with new size */
   }
+  //申请内存并创建结构体，组织方式： |TString结构体|l+1长的buff|
   ts = createstrobj(L, l, LUA_TSHRSTR, h);
   memcpy(getstr(ts), str, l * sizeof(char));
   ts->shrlen = cast_byte(l);
@@ -197,6 +215,7 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
 ** new string (with explicit length)
 */
 TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
+  //根据字符串长度来创建
   if (l <= LUAI_MAXSHORTLEN)  /* short string? */
     return internshrstr(L, str, l);
   else {

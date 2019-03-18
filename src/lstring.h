@@ -32,17 +32,27 @@
 */
 #define eqshrstr(a,b)	check_exp((a)->tt == LUA_TSHRSTR, (a) == (b))
 
-
+//计算一段buff的哈希值
 LUAI_FUNC unsigned int luaS_hash (const char *str, size_t l, unsigned int seed);
+//计算长字符串的哈希值
 LUAI_FUNC unsigned int luaS_hashlongstr (TString *ts);
+//比较字长符串
 LUAI_FUNC int luaS_eqlngstr (TString *a, TString *b);
+//重新分配散列桶的大小
 LUAI_FUNC void luaS_resize (lua_State *L, int newsize);
+
 LUAI_FUNC void luaS_clearcache (global_State *g);
 LUAI_FUNC void luaS_init (lua_State *L);
+
+//删除一个短字符串
 LUAI_FUNC void luaS_remove (lua_State *L, TString *ts);
 LUAI_FUNC Udata *luaS_newudata (lua_State *L, size_t s);
+
+//创建一个字符串
 LUAI_FUNC TString *luaS_newlstr (lua_State *L, const char *str, size_t l);
+
 LUAI_FUNC TString *luaS_new (lua_State *L, const char *str);
+//创建长字符串
 LUAI_FUNC TString *luaS_createlngstrobj (lua_State *L, size_t l);
 
 

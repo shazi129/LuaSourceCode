@@ -1,4 +1,4 @@
-/*
+﻿/*
 ** $Id: ltable.c,v 2.118.1.4 2018/06/08 16:22:51 roberto Exp $
 ** Lua tables (hash)
 ** See Copyright Notice in lua.h
@@ -138,6 +138,7 @@ static Node *mainposition (const Table *t, const TValue *key) {
 
 
 /*
+** key是一个unsigned int的数字，否则返回0
 ** returns the index for 'key' if 'key' is an appropriate key to live in
 ** the array part of the table, 0 otherwise.
 */
@@ -209,7 +210,7 @@ int luaH_next (lua_State *L, Table *t, StkId key) {
 ** ==============================================================
 */
 
-/*
+/* 计算数组部分合适的大小，nums为位图，pna为数组的个数
 ** Compute the optimal size for the array part of table 't'. 'nums' is a
 ** "count array" where 'nums[i]' is the number of integers in the table
 ** between 2^(i - 1) + 1 and 2^i. 'pna' enters with the total number of
@@ -226,8 +227,11 @@ static unsigned int computesizes (unsigned int nums[], unsigned int *pna) {
   for (i = 0, twotoi = 1;
        twotoi > 0 && *pna > twotoi / 2;
        i++, twotoi *= 2) {
+	//twotoi是num[0-i]中数字之和的最大值，即key存得没一点空隙时的最大值
     if (nums[i] > 0) {
+	  //a是num[0-i]中数字之和的实际值
       a += nums[i];
+	  //如果实际的值大于最大值的一般，就把数组的大小设为最大值
       if (a > twotoi/2) {  /* more than half elements present? */
         optimal = twotoi;  /* optimal size (till now) */
         na = a;  /* all elements up to 'optimal' will go to array part */
@@ -239,7 +243,7 @@ static unsigned int computesizes (unsigned int nums[], unsigned int *pna) {
   return optimal;
 }
 
-
+//如果key是个大于0的unsigned int，将它记录在nums[log2(key)]的位置， 并返回1
 static int countint (const TValue *key, unsigned int *nums) {
   unsigned int k = arrayindex(key);
   if (k != 0) {  /* is 'key' an appropriate array index? */
@@ -262,7 +266,13 @@ static unsigned int numusearray (const Table *t, unsigned int *nums) {
   unsigned int ause = 0;  /* summation of 'nums' */
   unsigned int i = 1;  /* count to traverse all array keys */
   /* traverse each slice */
-  for (lg = 0, ttlg = 1; lg <= MAXABITS; lg++, ttlg *= 2) {
+
+  //num[0] 为 array[0, 0]中不为nil的数, 即key[1,2]中的数
+  //num[1] 为 array[1, 1]中不为nil的数
+  //num[2] 为 array[2, 3]中不为nil的数
+  //num[3] 为 array[4, 7]中不为nil的数，即key[5, 8]中的数
+  //num[lg] 为 array[2^(lg-1), 2^lg - 1]中不为nil的数
+  for (lg = 0, ttlg = 1; lg <= MAXABITS; lg++, ttlg *= 2) { //所以lg步长为1， ttlg步长为2的幂
     unsigned int lc = 0;  /* counter */
     unsigned int lim = ttlg;
     if (lim > t->sizearray) {
@@ -395,12 +405,19 @@ void luaH_resizearray (lua_State *L, Table *t, unsigned int nasize) {
 static void rehash (lua_State *L, Table *t, const TValue *ek) {
   unsigned int asize;  /* optimal size for array part */
   unsigned int na;  /* number of keys in the array part */
+
+  //位图, 如果位于key的值不为nil，那么位图中num[ceil(log2(key))]中的值+1
+  //即key=8的值不为nil， num[3]++
   unsigned int nums[MAXABITS + 1];
   int i;
   int totaluse;
   for (i = 0; i <= MAXABITS; i++) nums[i] = 0;  /* reset counts */
+
+  //将数组中的信息填入位图，na为数组中元素的个数
   na = numusearray(t, nums);  /* count keys in array part */
   totaluse = na;  /* all those keys are integer keys */
+
+  //将哈希表中的信息填入位图
   totaluse += numusehash(t, nums, &na);  /* count keys in hash part */
   /* count extra key */
   na += countint(ek, nums);
@@ -422,6 +439,7 @@ Table *luaH_new (lua_State *L) {
   GCObject *o = luaC_newobj(L, LUA_TTABLE, sizeof(Table));
   Table *t = gco2t(o);
   t->metatable = NULL;
+  //flags初始化为255， 表示没有任何tag method（元方法）
   t->flags = cast_byte(~0);
   t->array = NULL;
   t->sizearray = 0;
@@ -437,7 +455,8 @@ void luaH_free (lua_State *L, Table *t) {
   luaM_free(L, t);
 }
 
-
+//找到node数组上的一个node.i_key.tvk不为nil的节点
+//疑问：lastfree变了？
 static Node *getfreepos (Table *t) {
   if (!isdummy(t)) {
     while (t->lastfree > t->node) {
@@ -451,7 +470,7 @@ static Node *getfreepos (Table *t) {
 
 
 
-/*
+/* 新建一个key，主要用在添加非数组的值上。因为数组的key就是其下标
 ** inserts a new key into a hash table; first, check whether key's main
 ** position is free. If not, check whether colliding node is in its main
 ** position or not: if it is not, move colliding node to an empty place and
@@ -461,7 +480,11 @@ static Node *getfreepos (Table *t) {
 TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
   Node *mp;
   TValue aux;
+
+  //key不能是nil
   if (ttisnil(key)) luaG_runerror(L, "table index is nil");
+
+  //检查key是否为nil, 并看能不能将float的key转成int的key
   else if (ttisfloat(key)) {
     lua_Integer k;
     if (luaV_tointeger(key, &k, 0)) {  /* does index fit in an integer? */
@@ -471,7 +494,11 @@ TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
     else if (luai_numisnan(fltvalue(key)))
       luaG_runerror(L, "table index is NaN");
   }
+
+  //根据key的类型获得key的哈希值，根据哈希值找到桶的位置
   mp = mainposition(t, key);
+
+  //mp的value有值，或者表就是空的，需要创建新的节点
   if (!ttisnil(gval(mp)) || isdummy(t)) {  /* main position is taken? */
     Node *othern;
     Node *f = getfreepos(t);  /* get a free place */
@@ -537,7 +564,7 @@ const TValue *luaH_getint (Table *t, lua_Integer key) {
 ** search function for short strings
 */
 const TValue *luaH_getshortstr (Table *t, TString *key) {
-  Node *n = hashstr(t, key);
+  Node *n = hashstr(t, key); //根据字符串的哈希值找到桶
   lua_assert(key->tt == LUA_TSHRSTR);
   for (;;) {  /* check whether 'key' is somewhere in the chain */
     const TValue *k = gkey(n);
@@ -587,17 +614,19 @@ const TValue *luaH_getstr (Table *t, TString *key) {
 ** main search function
 */
 const TValue *luaH_get (Table *t, const TValue *key) {
+  //根据key的类型调用不同的番薯来查找
   switch (ttype(key)) {
     case LUA_TSHRSTR: return luaH_getshortstr(t, tsvalue(key));
     case LUA_TNUMINT: return luaH_getint(t, ivalue(key));
     case LUA_TNIL: return luaO_nilobject;
     case LUA_TNUMFLT: {
       lua_Integer k;
+	  //将float的key转成int，如果floor(key) != int(key),则进入defaut
       if (luaV_tointeger(key, &k, 0)) /* index is int? */
         return luaH_getint(t, k);  /* use specialized version */
       /* else... */
     }  /* FALLTHROUGH */
-    default:
+    default: //通用查找
       return getgeneric(t, key);
   }
 }
@@ -632,6 +661,8 @@ void luaH_setint (lua_State *L, Table *t, lua_Integer key, TValue *value) {
 static lua_Unsigned unbound_search (Table *t, lua_Unsigned j) {
   lua_Unsigned i = j;  /* i is zero or a present index */
   j++;
+
+  //以2的幂次方为步长，找到一个为null的下标
   /* find 'i' and 'j' such that i is present and j is not */
   while (!ttisnil(luaH_getint(t, j))) {
     i = j;
@@ -643,6 +674,7 @@ static lua_Unsigned unbound_search (Table *t, lua_Unsigned j) {
     }
     j *= 2;
   }
+  //在i和i*2的区间进行二分查找
   /* now do a binary search between them */
   while (j - i > 1) {
     lua_Unsigned m = (i+j)/2;
@@ -662,10 +694,12 @@ lua_Unsigned luaH_getn (Table *t) {
   if (j > 0 && ttisnil(&t->array[j - 1])) {
     /* there is a boundary in the array part: (binary) search for it */
     unsigned int i = 0;
+
+	//二分查找最后一个不是nil的value，i=value其下标+1，也就是个数
     while (j - i > 1) {
       unsigned int m = (i+j)/2;
-      if (ttisnil(&t->array[m - 1])) j = m;
-      else i = m;
+      if (ttisnil(&t->array[m - 1])) j = m; //保证j-1始终为nil, 如果数组全为nil，最终j=1, i=0
+      else i = m; //如果移动过i，i-1始终不为nil
     }
     return i;
   }

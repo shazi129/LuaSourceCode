@@ -74,6 +74,9 @@
 
 #define dummynode		(&dummynode_)
 
+/**
+ * 一个假结构，当一个表指向它时，表示是一个空表
+ */
 static const Node dummynode_ = {
   {NILCONSTANT},  /* value */
   {{NILCONSTANT, 0}}  /* key */
@@ -113,6 +116,7 @@ static int l_hashfloat (lua_Number n) {
 /*
 ** returns the 'main' position of an element in a table (that is, the index
 ** of its hash value)
+* 根据key类型的不同，使用不同的哈希算法得到哈希桶，node数组中的位置
 */
 static Node *mainposition (const Table *t, const TValue *key) {
   switch (ttype(key)) {
@@ -210,7 +214,10 @@ int luaH_next (lua_State *L, Table *t, StkId key) {
 ** ==============================================================
 */
 
-/* 计算数组部分合适的大小，nums为位图，pna为数组的个数
+/* 计算数组部分合适的大小，nums为位图，pna为key为数字的值的个数
+** 返回结果：optimal，数组部分的合适大小; pna,数组部分值的个数
+** 计算方式，数组部分的利用率要大于50%
+** 
 ** Compute the optimal size for the array part of table 't'. 'nums' is a
 ** "count array" where 'nums[i]' is the number of integers in the table
 ** between 2^(i - 1) + 1 and 2^i. 'pna' enters with the total number of
@@ -224,14 +231,18 @@ static unsigned int computesizes (unsigned int nums[], unsigned int *pna) {
   unsigned int na = 0;  /* number of elements to go to array part */
   unsigned int optimal = 0;  /* optimal size for array part */
   /* loop while keys can fill more than half of total size */
+
+  //twotoi = 2^i， 表示key=[1, 2^i]区间值的最大个数。循环条件，总数(pna)大于key=[1, 2^i]区间最大值一半的时候，进行循环
   for (i = 0, twotoi = 1;
        twotoi > 0 && *pna > twotoi / 2;
-       i++, twotoi *= 2) {
-	//twotoi是num[0-i]中数字之和的最大值，即key存得没一点空隙时的最大值
-    if (nums[i] > 0) {
-	  //a是num[0-i]中数字之和的实际值
+       i++, twotoi *= 2)
+  {
+    if (nums[i] > 0)
+	{
+	  //a是num[0, i]中实际的值个数
       a += nums[i];
-	  //如果实际的值大于最大值的一般，就把数组的大小设为最大值
+
+	  //如果利用率大于50%，那么可以把数组的个数设为最大的个数
       if (a > twotoi/2) {  /* more than half elements present? */
         optimal = twotoi;  /* optimal size (till now) */
         na = a;  /* all elements up to 'optimal' will go to array part */
@@ -256,6 +267,11 @@ static int countint (const TValue *key, unsigned int *nums) {
 
 
 /*
+** 计算数组部分的位图，返回有值的个数
+** num[i] 表示 key位于 [2^(i-1) + 1, 2^i]之间值的个数， 其中，i=0时， key=[1, 1]
+** 那么，num[i]也表示array中，下标在[2^(i-1), 2^i - 1]区间内值的个数
+** 那么， sum(num[0], num[i]) = 2^i 表示存满
+
 ** Count keys in array part of table 't': Fill 'nums[i]' with
 ** number of keys that will go into corresponding slice and return
 ** total number of non-nil keys.
@@ -267,8 +283,8 @@ static unsigned int numusearray (const Table *t, unsigned int *nums) {
   unsigned int i = 1;  /* count to traverse all array keys */
   /* traverse each slice */
 
-  //num[0] 为 array[0, 0]中不为nil的数, 即key[1,2]中的数
-  //num[1] 为 array[1, 1]中不为nil的数
+  //num[0] 为 array[0, 0]中不为nil的数, 即key[1,1]中的数
+  //num[1] 为 array[1, 1]中不为nil的数, 即key[2,2]中的数
   //num[2] 为 array[2, 3]中不为nil的数
   //num[3] 为 array[4, 7]中不为nil的数，即key[5, 8]中的数
   //num[lg] 为 array[2^(lg-1), 2^lg - 1]中不为nil的数
@@ -291,7 +307,9 @@ static unsigned int numusearray (const Table *t, unsigned int *nums) {
   return ause;
 }
 
-
+/**
+ * 获得存在哈希表中key为数字的节点信息，nums为位图，pna为累加总数
+ */
 static int numusehash (const Table *t, unsigned int *nums, unsigned int *pna) {
   int totaluse = 0;  /* total number of elements */
   int ause = 0;  /* elements added to 'nums' (can go to array part) */
@@ -353,9 +371,11 @@ static void auxsetnode (lua_State *L, void *ud) {
   setnodevector(L, asn->t, asn->nhsize);
 }
 
-
-void luaH_resize (lua_State *L, Table *t, unsigned int nasize,
-                                          unsigned int nhsize) {
+/**
+ * 重新设置table的大小， nasize为数组大小，nhsize为哈希表部分大小
+ */
+void luaH_resize (lua_State *L, Table *t, unsigned int nasize, unsigned int nhsize) 
+{
   unsigned int i;
   int j;
   AuxsetnodeT asn;
@@ -419,11 +439,13 @@ static void rehash (lua_State *L, Table *t, const TValue *ek) {
 
   //将哈希表中的信息填入位图
   totaluse += numusehash(t, nums, &na);  /* count keys in hash part */
+
   /* count extra key */
-  na += countint(ek, nums);
+  na += countint(ek, nums); //要加进去的key
   totaluse++;
   /* compute new size for array part */
   asize = computesizes(nums, &na);
+
   /* resize the table to new computed sizes */
   luaH_resize(L, t, asize, totaluse - na);
 }
